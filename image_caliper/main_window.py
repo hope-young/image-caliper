@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from .image_canvas import ImageCanvas
 from .legacy_config import LegacyConfig, load_config, save_config
 from .magnifier_panel import MagnifierPanel
+from .resources import asset_path
 
 
 class MainWindow(QMainWindow):
@@ -39,7 +40,7 @@ class MainWindow(QMainWindow):
         self.workspace_root = Path(__file__).resolve().parents[1]
         self.settings_path = self.workspace_root / "settings.ini"
         self.legacy_config = load_config(self.settings_path, self.workspace_root.parent / "Processing.ini")
-        self.icon_path = self.workspace_root / "assets" / "imagecaliper-icon.png"
+        self.icon_path = asset_path("imagecaliper-icon.png")
         if self.icon_path.exists():
             self.setWindowIcon(QIcon(str(self.icon_path)))
 

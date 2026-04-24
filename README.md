@@ -1,5 +1,7 @@
 # ImageCaliper
 
+Version: 1.0.0
+
 ImageCaliper is a modern cross-platform image measurement and annotation tool, rewritten from the legacy `Image Processing English V1.0` workflow.
 
 Initial target:
@@ -12,6 +14,15 @@ Initial target:
 
 ```powershell
 cd image-caliper
+python -m image_caliper
+```
+
+On macOS or Linux, install Python 3.11+ first, then run:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 python -m image_caliper
 ```
 

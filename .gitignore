@@ -8,6 +8,13 @@ env/
 # Local runtime settings
 settings.ini
 
+# Build and release outputs
+build/
+dist/
+release-build/
+release-packages/
+*.spec
+
 # OS/editor files
 .DS_Store
 Thumbs.db
