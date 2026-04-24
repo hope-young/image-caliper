@@ -1,0 +1,96 @@
+name: Release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build/upload, for example v1.0.0"
+        required: true
+        default: "v1.0.0"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: windows-x64
+            runner: windows-latest
+            archive: zip
+          - name: macos
+            runner: macos-latest
+            archive: zip
+          - name: linux-x64
+            runner: ubuntu-latest
+            archive: tar
+
+    steps:
+      - name: Resolve release tag
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system libraries for Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xinput0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build app on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon assets\imagecaliper-icon.ico --add-data "assets;assets" --distpath dist --workpath build --specpath build packaging\run_imagecaliper.py
+          Compress-Archive -Path dist\ImageCaliper\* -DestinationPath ImageCaliper-${{ steps.version.outputs.tag }}-windows-x64.zip -Force
+
+      - name: Build app on macOS
+        if: runner.os == 'macOS'
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon assets/imagecaliper-icon.ico --add-data "assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
+          ditto -c -k --sequesterRsrc --keepParent dist/ImageCaliper.app ImageCaliper-${{ steps.version.outputs.tag }}-macos.zip
+
+      - name: Build app on Linux
+        if: runner.os == 'Linux'
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --add-data "assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
+          tar -czf ImageCaliper-${{ steps.version.outputs.tag }}-linux-x64.tar.gz -C dist ImageCaliper
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageCaliper-${{ steps.version.outputs.tag }}-${{ matrix.platform.name }}
+          path: |
+            ImageCaliper-${{ steps.version.outputs.tag }}-*.zip
+            ImageCaliper-${{ steps.version.outputs.tag }}-*.tar.gz
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" ImageCaliper-${{ steps.version.outputs.tag }}-* --clobber
