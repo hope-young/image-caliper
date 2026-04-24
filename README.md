@@ -34,3 +34,8 @@ python -m image_caliper
 - Measurement results dock
 - Measurement CSV export
 - Persistent settings in `settings.ini`
+
+## Assets
+
+- Application icon: `assets/imagecaliper-icon.png`
+- Windows icon bundle: `assets/imagecaliper-icon.ico`
