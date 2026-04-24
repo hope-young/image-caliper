@@ -66,19 +66,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon assets\imagecaliper-icon.ico --add-data "assets;assets" --distpath dist --workpath build --specpath build packaging\run_imagecaliper.py
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon "${{ github.workspace }}\assets\imagecaliper-icon.ico" --add-data "${{ github.workspace }}\assets;assets" --distpath dist --workpath build --specpath build packaging\run_imagecaliper.py
           Compress-Archive -Path dist\ImageCaliper\* -DestinationPath ImageCaliper-${{ steps.version.outputs.tag }}-windows-x64.zip -Force
 
       - name: Build app on macOS
         if: runner.os == 'macOS'
         run: |
-          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon assets/imagecaliper-icon.ico --add-data "assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --icon "${{ github.workspace }}/assets/imagecaliper-icon.ico" --add-data "${{ github.workspace }}/assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
           ditto -c -k --sequesterRsrc --keepParent dist/ImageCaliper.app ImageCaliper-${{ steps.version.outputs.tag }}-macos.zip
 
       - name: Build app on Linux
         if: runner.os == 'Linux'
         run: |
-          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --add-data "assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
+          python -m PyInstaller --noconfirm --clean --windowed --name ImageCaliper --add-data "${{ github.workspace }}/assets:assets" --distpath dist --workpath build --specpath build packaging/run_imagecaliper.py
           tar -czf ImageCaliper-${{ steps.version.outputs.tag }}-linux-x64.tar.gz -C dist ImageCaliper
 
       - name: Upload artifact
