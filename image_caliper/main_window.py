@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         self.canvas.cursor_image_position_changed.connect(self.magnifier_panel.update_position)
         self.canvas.calibration_changed.connect(self._on_canvas_calibration_changed)
         self.canvas.operation_recorded.connect(self._append_measurement_result)
-        self.canvas.operation_removed.connect(self._remove_last_measurement_result)
+        self.canvas.operation_removed.connect(self._remove_measurement_result)
         self.canvas.operations_cleared.connect(self._clear_measurement_results)
 
     def _open_image(self) -> None:
@@ -459,10 +459,16 @@ class MainWindow(QMainWindow):
         self.measurement_table.setItem(row, 1, QTableWidgetItem(text))
         self.measurement_table.scrollToBottom()
 
-    def _remove_last_measurement_result(self, _text: str) -> None:
-        row = self.measurement_table.rowCount() - 1
-        if row >= 0:
-            self.measurement_table.removeRow(row)
+    def _remove_measurement_result(self, text: str) -> None:
+        row_to_remove = self.measurement_table.rowCount() - 1
+        for row in range(self.measurement_table.rowCount()):
+            item = self.measurement_table.item(row, 1)
+            if item is not None and item.text() == text:
+                row_to_remove = row
+                break
+        if row_to_remove >= 0:
+            self.measurement_table.removeRow(row_to_remove)
+            self._renumber_measurement_rows()
 
     def _clear_measurement_results(self) -> None:
         self.measurement_table.setRowCount(0)
@@ -476,6 +482,14 @@ class MainWindow(QMainWindow):
             result = result_item.text() if result_item is not None else ""
             rows.append((index, result))
         return rows
+
+    def _renumber_measurement_rows(self) -> None:
+        for row in range(self.measurement_table.rowCount()):
+            item = self.measurement_table.item(row, 0)
+            if item is None:
+                item = QTableWidgetItem()
+                self.measurement_table.setItem(row, 0, item)
+            item.setText(str(row + 1))
 
     def _on_image_loaded(self, path: str) -> None:
         self._status.showMessage(f"Loaded: {path}", 3000)

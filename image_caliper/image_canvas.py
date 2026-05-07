@@ -42,6 +42,7 @@ class ImageCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._pixmap_item: QGraphicsPixmapItem | None = None
         self._image_bgr: np.ndarray | None = None
@@ -53,6 +54,7 @@ class ImageCanvas(QGraphicsView):
         self._measure_items: list = []
         self._pending_items: list = []
         self._operations: list[tuple[list, str]] = []
+        self._operation_sequence = 0
         self._current_path: QPainterPath | None = None
         self._current_path_item = None
         self._arrow_start: QPointF | None = None
@@ -61,6 +63,8 @@ class ImageCanvas(QGraphicsView):
         self._selected_label: QGraphicsTextItem | None = None
         self._selected_label_frame = None
         self._selected_label_handles: list = []
+        self._selected_operation_id: int | None = None
+        self._selected_operation_frame = None
         self._label_drag_mode: str | None = None
         self._label_last_pos: QPointF | None = None
         self._label_resize_anchor: QPointF | None = None
@@ -102,10 +106,12 @@ class ImageCanvas(QGraphicsView):
         pixmap = self._cv_bgr_to_pixmap(image)
 
         self._clear_label_selection()
+        self._clear_operation_selection()
         self.scene().clear()
         self._drag_preview_items.clear()
         self._measure_items.clear()
         self._operations.clear()
+        self._operation_sequence = 0
         self.operations_cleared.emit()
         self._pixmap_item = self.scene().addPixmap(pixmap)
         self.scene().setSceneRect(QRectF(pixmap.rect()))
@@ -120,7 +126,7 @@ class ImageCanvas(QGraphicsView):
 
     def set_tool(self, tool: str) -> None:
         self._tool = tool
-        self._clear_label_selection()
+        self._clear_all_selection()
         self._measure_start = None
         self._measure_points.clear()
         self._pending_items.clear()
@@ -167,7 +173,7 @@ class ImageCanvas(QGraphicsView):
 
     def clear_measurements(self) -> None:
         self._clear_drag_preview()
-        self._clear_label_selection()
+        self._clear_all_selection()
         for item in self._measure_items:
             self.scene().removeItem(item)
         self._measure_items.clear()
@@ -175,6 +181,7 @@ class ImageCanvas(QGraphicsView):
         self._measure_points.clear()
         self._pending_items.clear()
         self._operations.clear()
+        self._operation_sequence = 0
         self.measurement_changed.emit("")
         self.operations_cleared.emit()
 
@@ -183,8 +190,8 @@ class ImageCanvas(QGraphicsView):
             return
         items, result_text = self._operations.pop()
         for item in items:
-            if item is self._selected_label:
-                self._clear_label_selection()
+            if item is self._selected_label or item.data(2) == self._selected_operation_id:
+                self._clear_all_selection()
             self.scene().removeItem(item)
             if item in self._measure_items:
                 self._measure_items.remove(item)
@@ -246,10 +253,14 @@ class ImageCanvas(QGraphicsView):
             return
 
         scene_pos = self.mapToScene(event.position().toPoint())
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         if self._tool == "mouse" and event.button() == Qt.MouseButton.LeftButton:
             if self._try_begin_label_edit(scene_pos):
                 return
             self._clear_label_selection()
+            if self._try_select_operation(scene_pos):
+                return
+            self._clear_operation_selection()
 
         if self._tool in {"calibration", "measure_x", "measure_y", "measure_distance", "measure_angle", "measure_area", "arrow", "text"} and self._pixmap_item is not None:
             if self._pixmap_item.contains(scene_pos):
@@ -318,6 +329,18 @@ class ImageCanvas(QGraphicsView):
                 self._current_path_item.setPath(self._current_path)
                 return
         super().mouseMoveEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in {Qt.Key.Key_Delete, Qt.Key.Key_Backspace}:
+            if self._selected_label is not None:
+                operation_id = self._selected_label.data(2)
+                if operation_id is not None:
+                    self._delete_operation(operation_id)
+                    return
+            if self._selected_operation_id is not None:
+                self._delete_operation(self._selected_operation_id)
+                return
+        super().keyPressEvent(event)
 
     def _handle_measure_click(self, pos: QPointF, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
         if self._tool == "measure_angle":
@@ -407,9 +430,88 @@ class ImageCanvas(QGraphicsView):
 
     def _add_operation(self, items: list, result_text: str = "") -> None:
         if items:
+            self._operation_sequence += 1
+            operation_id = self._operation_sequence
+            for item in items:
+                item.setData(2, operation_id)
             self._operations.append((items, result_text))
             if result_text:
                 self.operation_recorded.emit(result_text)
+
+    def _try_select_operation(self, scene_pos: QPointF) -> bool:
+        for item in self.scene().items(scene_pos):
+            if item is self._pixmap_item or item is self._selected_operation_frame:
+                continue
+            if item.data(0) in {"label_frame", "label_handle"}:
+                continue
+            operation_id = item.data(2)
+            if operation_id is not None:
+                self._select_operation(operation_id)
+                return True
+        return False
+
+    def _select_operation(self, operation_id: int) -> None:
+        self._clear_label_selection()
+        self._selected_operation_id = operation_id
+        self._update_operation_frame()
+
+    def _delete_operation(self, operation_id: int) -> None:
+        record_index = None
+        record_items: list = []
+        result_text = ""
+        for index, (items, text) in enumerate(self._operations):
+            if any(item.data(2) == operation_id for item in items):
+                record_index = index
+                record_items = items
+                result_text = text
+                break
+        if record_index is None:
+            return
+
+        self._clear_all_selection()
+        for item in record_items:
+            self.scene().removeItem(item)
+            if item in self._measure_items:
+                self._measure_items.remove(item)
+        self._operations.pop(record_index)
+        self.measurement_changed.emit("")
+        if result_text:
+            self.operation_removed.emit(result_text)
+
+    def _update_operation_frame(self) -> None:
+        rect = self._selected_operation_rect()
+        if rect.isNull():
+            self._clear_operation_selection()
+            return
+        pen = QPen(QColor("#0078d4"), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        if self._selected_operation_frame is None:
+            self._selected_operation_frame = self.scene().addRect(rect, pen)
+            self._selected_operation_frame.setZValue(20)
+            self._selected_operation_frame.setData(0, "operation_frame")
+        else:
+            self._selected_operation_frame.setRect(rect)
+            self._selected_operation_frame.setPen(pen)
+
+    def _selected_operation_rect(self) -> QRectF:
+        if self._selected_operation_id is None:
+            return QRectF()
+        rect = QRectF()
+        for items, _text in self._operations:
+            for item in items:
+                if item.data(2) == self._selected_operation_id:
+                    rect = item.sceneBoundingRect() if rect.isNull() else rect.united(item.sceneBoundingRect())
+        return rect.adjusted(-4.0, -4.0, 4.0, 4.0) if not rect.isNull() else rect
+
+    def _clear_operation_selection(self) -> None:
+        if self._selected_operation_frame is not None:
+            self.scene().removeItem(self._selected_operation_frame)
+            self._selected_operation_frame = None
+        self._selected_operation_id = None
+
+    def _clear_all_selection(self) -> None:
+        self._clear_label_selection()
+        self._clear_operation_selection()
 
     def _finish_drag_tool(self, start: QPointF, end: QPointF) -> None:
         if self._is_linear_measure_tool():
@@ -784,6 +886,7 @@ class ImageCanvas(QGraphicsView):
         return False
 
     def _select_label(self, item: QGraphicsTextItem) -> None:
+        self._clear_operation_selection()
         self._selected_label = item
         self._update_label_frame()
 
@@ -892,13 +995,16 @@ class ImageCanvas(QGraphicsView):
         return Qt.CursorShape.SizeVerCursor
 
     def _label_controls_visible(self) -> bool:
-        if self._selected_label_frame is None:
-            return False
-        return self._selected_label_frame.isVisible()
+        return any(
+            item is not None and item.isVisible()
+            for item in [self._selected_label_frame, self._selected_operation_frame]
+        )
 
     def _set_label_controls_visible(self, visible: bool) -> None:
         if self._selected_label_frame is not None:
             self._selected_label_frame.setVisible(visible)
+        if self._selected_operation_frame is not None:
+            self._selected_operation_frame.setVisible(visible)
         for handle in self._selected_label_handles:
             handle.setVisible(visible)
 

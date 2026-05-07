@@ -20,7 +20,7 @@ class MagnifierPanel(QWidget):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumSize(self.MIN_PREVIEW_SIZE, self.MIN_PREVIEW_SIZE)
         self.preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.preview_label.setStyleSheet("QLabel { background: #111; color: #bbb; border: 1px solid #555; }")
+        self.preview_label.setStyleSheet("QLabel { background: #fff; color: #555; border: 1px solid #c8c8c8; }")
 
         self.zoom_spin = QSpinBox(self)
         self.zoom_spin.setRange(1, 12)
@@ -122,7 +122,7 @@ class MagnifierPanel(QWidget):
         if src_x0 >= src_x1 or src_y0 >= src_y1:
             return
 
-        crop = np.full((crop_size, crop_size, 3), 32, dtype=self._image_bgr.dtype)
+        crop = np.full((crop_size, crop_size, 3), 255, dtype=self._image_bgr.dtype)
         dst_x0 = src_x0 - x0
         dst_y0 = src_y0 - y0
         dst_x1 = dst_x0 + (src_x1 - src_x0)
