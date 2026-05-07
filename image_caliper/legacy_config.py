@@ -14,7 +14,7 @@ class LegacyConfig:
     show_pixel_values: bool = False
     measurement_interaction_mode: str = "click"
     magnifier_zoom: int = 2
-    annotation_color: str = "#00a6d6"
+    annotation_color: str = "#ff3b30"
     annotation_font_family: str = ""
     annotation_font_size: int = 10
     line_width: int = 2

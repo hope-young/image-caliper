@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         self._measurement_label = ""
         self._annotation_color = QColor(self.legacy_config.annotation_color)
         if not self._annotation_color.isValid():
-            self._annotation_color = QColor("#00a6d6")
+            self._annotation_color = QColor("#ff3b30")
 
         self._build_actions()
         self._build_menus()
@@ -409,7 +409,11 @@ class MainWindow(QMainWindow):
         self.canvas.set_measurement_interaction_mode(self.measurement_mode_combo.currentData())
 
     def _choose_font(self) -> None:
-        font, accepted = QFontDialog.getFont(self.canvas.annotation_font, self, "Font")
+        result = QFontDialog.getFont(self.canvas.annotation_font, self, "Font")
+        if isinstance(result[0], QFont):
+            font, accepted = result
+        else:
+            accepted, font = result
         if not accepted:
             return
         self.canvas.set_annotation_font(font)

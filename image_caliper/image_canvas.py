@@ -5,8 +5,22 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QWheelEvent
-from PySide6.QtWidgets import QFileDialog, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QInputDialog, QMenu
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QWheelEvent
+from PySide6.QtWidgets import QFileDialog, QGraphicsPixmapItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QInputDialog, QMenu
+
+
+class EditableLabelItem(QGraphicsTextItem):
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.background_color = QColor("#ffffff")
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.background_color))
+        painter.drawRect(self.boundingRect().adjusted(-2.0, -1.0, 2.0, 1.0))
+        painter.restore()
+        super().paint(painter, option, widget)
 
 
 class ImageCanvas(QGraphicsView):
@@ -44,12 +58,19 @@ class ImageCanvas(QGraphicsView):
         self._arrow_start: QPointF | None = None
         self._drag_measure_start: QPointF | None = None
         self._drag_preview_items: list = []
+        self._selected_label: QGraphicsTextItem | None = None
+        self._selected_label_frame = None
+        self._selected_label_handles: list = []
+        self._label_drag_mode: str | None = None
+        self._label_last_pos: QPointF | None = None
+        self._label_resize_anchor: QPointF | None = None
+        self._label_resize_start_size = 10
         self.calibration_value = 1.0
         self.unit = "nm"
         self.decimal_places = 4
         self.show_pixel_values = False
         self.measurement_interaction_mode = "click"
-        self.annotation_color = QColor("#00a6d6")
+        self.annotation_color = QColor("#ff3b30")
         self.measurement_color = QColor("#ff3b30")
         self.calibration_color = QColor("#34c759")
         self.annotation_font = QFont()
@@ -80,6 +101,7 @@ class ImageCanvas(QGraphicsView):
         self._image_path = path
         pixmap = self._cv_bgr_to_pixmap(image)
 
+        self._clear_label_selection()
         self.scene().clear()
         self._drag_preview_items.clear()
         self._measure_items.clear()
@@ -98,6 +120,7 @@ class ImageCanvas(QGraphicsView):
 
     def set_tool(self, tool: str) -> None:
         self._tool = tool
+        self._clear_label_selection()
         self._measure_start = None
         self._measure_points.clear()
         self._pending_items.clear()
@@ -112,12 +135,22 @@ class ImageCanvas(QGraphicsView):
     def set_annotation_color(self, color: QColor) -> None:
         if color.isValid():
             self.annotation_color = QColor(color)
+            if self._selected_label is not None:
+                self._selected_label.setDefaultTextColor(self.annotation_color)
 
     def set_annotation_font(self, font: QFont) -> None:
         self.annotation_font = QFont(font)
+        if self._selected_label is not None:
+            self._selected_label.setFont(self.annotation_font)
+            self._update_label_frame()
 
     def set_annotation_font_size(self, point_size: int) -> None:
         self.annotation_font.setPointSize(point_size)
+        if self._selected_label is not None:
+            font = QFont(self._selected_label.font())
+            font.setPointSize(point_size)
+            self._selected_label.setFont(font)
+            self._update_label_frame()
 
     def set_line_width(self, width: int) -> None:
         self.line_width = max(1, width)
@@ -134,6 +167,7 @@ class ImageCanvas(QGraphicsView):
 
     def clear_measurements(self) -> None:
         self._clear_drag_preview()
+        self._clear_label_selection()
         for item in self._measure_items:
             self.scene().removeItem(item)
         self._measure_items.clear()
@@ -149,6 +183,8 @@ class ImageCanvas(QGraphicsView):
             return
         items, result_text = self._operations.pop()
         for item in items:
+            if item is self._selected_label:
+                self._clear_label_selection()
             self.scene().removeItem(item)
             if item in self._measure_items:
                 self._measure_items.remove(item)
@@ -181,9 +217,12 @@ class ImageCanvas(QGraphicsView):
         rect = self.scene().itemsBoundingRect()
         image = QImage(rect.size().toSize(), QImage.Format.Format_ARGB32)
         image.fill(Qt.GlobalColor.white)
+        label_controls_were_visible = self._label_controls_visible()
+        self._set_label_controls_visible(False)
         painter = QPainter(image)
         self.scene().render(painter, QRectF(image.rect()), rect)
         painter.end()
+        self._set_label_controls_visible(label_controls_were_visible)
 
         if not image.save(str(path)):
             raise ValueError(f"Error Saving Image: {path}")
@@ -206,20 +245,25 @@ class ImageCanvas(QGraphicsView):
             self._show_context_menu(event.globalPosition().toPoint())
             return
 
+        scene_pos = self.mapToScene(event.position().toPoint())
+        if self._tool == "mouse" and event.button() == Qt.MouseButton.LeftButton:
+            if self._try_begin_label_edit(scene_pos):
+                return
+            self._clear_label_selection()
+
         if self._tool in {"calibration", "measure_x", "measure_y", "measure_distance", "measure_angle", "measure_area", "arrow", "text"} and self._pixmap_item is not None:
-            scene_pos = self.mapToScene(event.position().toPoint())
             if self._pixmap_item.contains(scene_pos):
                 if self._tool == "text":
                     self._handle_text_click(scene_pos)
                 elif self.measurement_interaction_mode == "drag" and self._is_drag_supported_tool():
-                    self._drag_measure_start = QPointF(scene_pos)
+                    self._drag_measure_start = QPointF(self._constrain_tool_point(scene_pos, event.modifiers()))
                     self._clear_drag_preview()
                 elif self._tool == "arrow":
                     self._handle_arrow_click(scene_pos)
                 elif self._tool == "calibration":
                     self._handle_calibration_click(scene_pos)
                 else:
-                    self._handle_measure_click(scene_pos)
+                    self._handle_measure_click(scene_pos, event.modifiers())
                 return
 
         if self._tool == "curve" and self._pixmap_item is not None and event.button() == Qt.MouseButton.LeftButton:
@@ -236,9 +280,15 @@ class ImageCanvas(QGraphicsView):
         if self._drag_measure_start is not None and self._is_drag_supported_tool():
             scene_pos = self.mapToScene(event.position().toPoint())
             if self._pixmap_item is not None and self._pixmap_item.contains(scene_pos):
-                self._finish_drag_tool(self._drag_measure_start, scene_pos)
+                self._finish_drag_tool(self._drag_measure_start, self._constrain_tool_point(scene_pos, event.modifiers()))
             self._drag_measure_start = None
             self._clear_drag_preview()
+            return
+
+        if self._label_drag_mode is not None:
+            self._label_drag_mode = None
+            self._label_last_pos = None
+            self._label_resize_anchor = None
             return
 
         if self._tool == "curve" and self._current_path_item is not None:
@@ -250,11 +300,18 @@ class ImageCanvas(QGraphicsView):
 
     def mouseMoveEvent(self, event) -> None:
         scene_pos = self.mapToScene(event.position().toPoint())
+        if self._label_drag_mode is not None:
+            self._update_label_edit(scene_pos)
+            return
+
+        if self._tool == "mouse":
+            self._update_label_hover_cursor(scene_pos)
+
         if self._pixmap_item is not None and self._pixmap_item.contains(scene_pos):
             self.cursor_position_changed.emit(scene_pos.x(), scene_pos.y())
             self.cursor_image_position_changed.emit(scene_pos.x(), scene_pos.y())
             if self._drag_measure_start is not None and self._is_drag_supported_tool():
-                self._update_drag_preview(self._drag_measure_start, scene_pos)
+                self._update_drag_preview(self._drag_measure_start, self._constrain_tool_point(scene_pos, event.modifiers()))
                 return
             if self._tool == "curve" and self._current_path is not None and self._current_path_item is not None:
                 self._current_path.lineTo(scene_pos)
@@ -262,8 +319,12 @@ class ImageCanvas(QGraphicsView):
                 return
         super().mouseMoveEvent(event)
 
-    def _handle_measure_click(self, pos: QPointF) -> None:
+    def _handle_measure_click(self, pos: QPointF, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
         if self._tool == "measure_angle":
+            if len(self._measure_points) == 1:
+                pos = self._axis_constrained_point(self._measure_points[0], pos, modifiers)
+            elif len(self._measure_points) == 2:
+                pos = self._axis_constrained_point(self._measure_points[1], pos, modifiers)
             marker = self._add_marker(pos, self.annotation_color, self._annotation_pen())
             self._measure_points.append(QPointF(pos))
             self._pending_items.append(marker)
@@ -313,8 +374,7 @@ class ImageCanvas(QGraphicsView):
         denominator = float(np.linalg.norm(v1) * np.linalg.norm(v2))
         angle = 0.0 if denominator == 0 else float(np.degrees(np.arccos(np.clip(np.dot(v1, v2) / denominator, -1.0, 1.0))))
         text = f"Center-Angle = {self._format_number(angle)} angle"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(center + QPointF(6, 6))
         self._measure_items.append(text_item)
         self._add_operation([*self._pending_items, line1, line2, text_item], text)
@@ -340,8 +400,7 @@ class ImageCanvas(QGraphicsView):
         text, accepted = QInputDialog.getText(self, "Text", "Label")
         if not accepted or not text.strip():
             return
-        item = self.scene().addText(text.strip())
-        self._apply_text_style(item, self.annotation_color)
+        item = self._add_label(text.strip())
         item.setPos(pos)
         self._measure_items.append(item)
         self._add_operation([item])
@@ -398,8 +457,7 @@ class ImageCanvas(QGraphicsView):
         self.calibration_value = real_length / pixels
         ruler_items = self._add_ruler(start, end, self._calibration_pen(), self.calibration_color)
         text = f"CALIBRATE = {self.calibration_value:.8f} {self.unit}/px"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.calibration_color)
+        text_item = self._add_label(text)
         text_item.setPos(self._midpoint_label_pos(start, end))
         self._measure_items.extend([*ruler_items, text_item])
         result = self._format_calibration_result(text, pixels, real_length)
@@ -423,8 +481,7 @@ class ImageCanvas(QGraphicsView):
 
         circle = self._add_circle(center, radius_px, self._measurement_pen())
         text = f"Circle of Area = {self._format_number(area)} {self.unit}^2"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(edge + QPointF(6, 6))
         self._measure_items.extend([circle, text_item])
         self._add_operation([*pending_items, circle, text_item], text)
@@ -446,8 +503,7 @@ class ImageCanvas(QGraphicsView):
 
         ruler_items = self._add_ruler(start, end, self._measurement_pen(), self.measurement_color)
         text = self._format_linear_measurement_text(pixels)
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(end + QPointF(6, 6))
 
         operation_items = [*self._pending_items, *ruler_items, text_item]
@@ -466,8 +522,7 @@ class ImageCanvas(QGraphicsView):
         pen.setStyle(Qt.PenStyle.DashLine)
         ruler_items = self._add_ruler(start, end, pen, self.measurement_color)
         text = self._format_linear_measurement_text(pixels)
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(end + QPointF(6, 6))
         self._drag_preview_items = [*ruler_items, text_item]
         self.measurement_changed.emit(text)
@@ -481,8 +536,7 @@ class ImageCanvas(QGraphicsView):
         pen.setStyle(Qt.PenStyle.DashLine)
         ruler_items = self._add_ruler(start, end, pen, self.calibration_color)
         text = f"Calibration length = {pixels:.2f} px"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.calibration_color)
+        text_item = self._add_label(text)
         text_item.setPos(self._midpoint_label_pos(start, end))
         self._drag_preview_items = [*ruler_items, text_item]
         self.measurement_changed.emit(text)
@@ -504,8 +558,7 @@ class ImageCanvas(QGraphicsView):
         radius_unit = radius_px * self.calibration_value
         area = float(np.pi * radius_unit * radius_unit)
         text = f"Circle of Area = {self._format_number(area)} {self.unit}^2"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(edge + QPointF(6, 6))
         self._drag_preview_items = [circle, text_item]
         self.measurement_changed.emit(text)
@@ -581,7 +634,8 @@ class ImageCanvas(QGraphicsView):
         if radius == 0:
             return [], ""
 
-        baseline = QPointF(center.x() + radius, center.y())
+        baseline_length = max(28.0, min(44.0, self.line_width * 14.0))
+        baseline = QPointF(center.x() + baseline_length, center.y())
         line1 = self.scene().addLine(center.x(), center.y(), baseline.x(), baseline.y(), pen)
         line2 = self.scene().addLine(center.x(), center.y(), end.x(), end.y(), pen)
 
@@ -589,9 +643,9 @@ class ImageCanvas(QGraphicsView):
         angle = float(np.degrees(np.arctan2(-vector[1], vector[0])))
         if angle < 0:
             angle += 360.0
+        angle = min(angle, 360.0 - angle)
         text = f"Center-Angle = {self._format_number(angle)} angle"
-        text_item = self.scene().addText(text)
-        self._apply_text_style(text_item, self.measurement_color)
+        text_item = self._add_label(text)
         text_item.setPos(center + QPointF(6, 6))
         return [line1, line2, text_item], text
 
@@ -625,6 +679,21 @@ class ImageCanvas(QGraphicsView):
             end.setX(start.x())
         return end
 
+    def _constrain_tool_point(self, pos: QPointF, modifiers: Qt.KeyboardModifier) -> QPointF:
+        if self._tool == "measure_angle" and self._drag_measure_start is not None:
+            return self._axis_constrained_point(self._drag_measure_start, pos, modifiers)
+        return pos
+
+    @staticmethod
+    def _axis_constrained_point(anchor: QPointF, pos: QPointF, modifiers: Qt.KeyboardModifier) -> QPointF:
+        if not modifiers & Qt.KeyboardModifier.ShiftModifier:
+            return pos
+        dx = pos.x() - anchor.x()
+        dy = pos.y() - anchor.y()
+        if abs(dx) >= abs(dy):
+            return QPointF(pos.x(), anchor.y())
+        return QPointF(anchor.x(), pos.y())
+
     @staticmethod
     def _distance_pixels(start: QPointF, end: QPointF) -> float:
         dx = end.x() - start.x()
@@ -646,6 +715,17 @@ class ImageCanvas(QGraphicsView):
     def _is_linear_measure_tool(self) -> bool:
         return self._tool in {"measure_x", "measure_y", "measure_distance"}
 
+    def _is_drag_supported_tool(self) -> bool:
+        return self._tool in {
+            "calibration",
+            "measure_x",
+            "measure_y",
+            "measure_distance",
+            "measure_angle",
+            "measure_area",
+            "arrow",
+        }
+
     def _format_calibration_result(self, text: str, pixels: float, real_length: float) -> str:
         if not self.show_pixel_values:
             return text
@@ -666,6 +746,161 @@ class ImageCanvas(QGraphicsView):
     def _apply_text_style(self, item, color: QColor) -> None:
         item.setDefaultTextColor(color)
         item.setFont(self.annotation_font)
+
+    def _add_label(self, text: str, color: QColor | None = None) -> QGraphicsTextItem:
+        item = EditableLabelItem(text)
+        self.scene().addItem(item)
+        self._apply_text_style(item, color or self.annotation_color)
+        item.setZValue(10)
+        item.setData(0, "editable_label")
+        return item
+
+    def _try_begin_label_edit(self, scene_pos: QPointF) -> bool:
+        handle_role = self._label_handle_at(scene_pos)
+        if handle_role is not None:
+            self._label_drag_mode = "resize"
+            self._label_last_pos = QPointF(scene_pos)
+            self._label_resize_anchor = self._selected_label.sceneBoundingRect().center() if self._selected_label is not None else QPointF(scene_pos)
+            self._label_resize_start_size = max(1, self._selected_label.font().pointSize()) if self._selected_label is not None else 10
+            return True
+
+        if self._selected_label is not None and self._label_frame_rect().contains(scene_pos):
+            self._label_drag_mode = "move"
+            self._label_last_pos = QPointF(scene_pos)
+            self._label_resize_anchor = self._selected_label.sceneBoundingRect().center()
+            self._label_resize_start_size = max(1, self._selected_label.font().pointSize())
+            return True
+
+        for item in self.scene().items(scene_pos):
+            if item is self._selected_label_frame:
+                continue
+            if isinstance(item, QGraphicsTextItem) and item.data(0) == "editable_label":
+                self._select_label(item)
+                self._label_drag_mode = "move"
+                self._label_last_pos = QPointF(scene_pos)
+                self._label_resize_anchor = item.sceneBoundingRect().center()
+                self._label_resize_start_size = max(1, item.font().pointSize())
+                return True
+        return False
+
+    def _select_label(self, item: QGraphicsTextItem) -> None:
+        self._selected_label = item
+        self._update_label_frame()
+
+    def _clear_label_selection(self) -> None:
+        for handle in self._selected_label_handles:
+            self.scene().removeItem(handle)
+        self._selected_label_handles.clear()
+        if self._selected_label_frame is not None:
+            self.scene().removeItem(self._selected_label_frame)
+            self._selected_label_frame = None
+        self._selected_label = None
+        self._label_drag_mode = None
+        self._label_last_pos = None
+        self._label_resize_anchor = None
+
+    def _update_label_edit(self, scene_pos: QPointF) -> None:
+        if self._selected_label is None or self._label_last_pos is None:
+            return
+
+        if self._label_drag_mode == "move":
+            delta = scene_pos - self._label_last_pos
+            self._selected_label.setPos(self._selected_label.pos() + delta)
+            self._label_last_pos = QPointF(scene_pos)
+        elif self._label_drag_mode == "resize" and self._label_resize_anchor is not None:
+            start_distance = max(1.0, self._distance_pixels(self._label_resize_anchor, self._label_last_pos))
+            current_distance = max(1.0, self._distance_pixels(self._label_resize_anchor, scene_pos))
+            new_size = round(self._label_resize_start_size * current_distance / start_distance)
+            font = QFont(self._selected_label.font())
+            font.setPointSize(max(4, min(96, new_size)))
+            self._selected_label.setFont(font)
+
+        self._update_label_frame()
+
+    def _update_label_frame(self) -> None:
+        if self._selected_label is None:
+            return
+        rect = self._label_frame_rect()
+        pen = QPen(QColor("#111111"), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        if self._selected_label_frame is None:
+            self._selected_label_frame = self.scene().addRect(rect, pen)
+            self._selected_label_frame.setZValue(self._selected_label.zValue() + 1)
+            self._selected_label_frame.setData(0, "label_frame")
+        else:
+            self._selected_label_frame.setRect(rect)
+            self._selected_label_frame.setPen(pen)
+        self._update_label_handles(rect)
+
+    def _label_frame_rect(self) -> QRectF:
+        if self._selected_label is None:
+            return QRectF()
+        return self._selected_label.sceneBoundingRect().adjusted(-4.0, -3.0, 4.0, 3.0)
+
+    def _update_label_handles(self, rect: QRectF) -> None:
+        roles_and_points = {
+            "top_left": rect.topLeft(),
+            "top": QPointF(rect.center().x(), rect.top()),
+            "top_right": rect.topRight(),
+            "right": QPointF(rect.right(), rect.center().y()),
+            "bottom_right": rect.bottomRight(),
+            "bottom": QPointF(rect.center().x(), rect.bottom()),
+            "bottom_left": rect.bottomLeft(),
+            "left": QPointF(rect.left(), rect.center().y()),
+        }
+        size = max(5.0, 8.0 / max(0.1, self.transform().m11()))
+        pen = QPen(QColor("#111111"), 1)
+        brush = QBrush(QColor("#ffffff"))
+        existing = {handle.data(1): handle for handle in self._selected_label_handles}
+        for role, point in roles_and_points.items():
+            handle_rect = QRectF(point.x() - size / 2.0, point.y() - size / 2.0, size, size)
+            handle = existing.get(role)
+            if handle is None:
+                handle = self.scene().addRect(handle_rect, pen, brush)
+                handle.setData(0, "label_handle")
+                handle.setData(1, role)
+                handle.setZValue((self._selected_label.zValue() if self._selected_label is not None else 10) + 2)
+                self._selected_label_handles.append(handle)
+            else:
+                handle.setRect(handle_rect)
+                handle.setPen(pen)
+                handle.setBrush(brush)
+
+    def _label_handle_at(self, scene_pos: QPointF) -> str | None:
+        for handle in self._selected_label_handles:
+            if handle.sceneBoundingRect().contains(scene_pos):
+                return handle.data(1)
+        return None
+
+    def _update_label_hover_cursor(self, scene_pos: QPointF) -> None:
+        role = self._label_handle_at(scene_pos)
+        if role is not None:
+            self.viewport().setCursor(self._cursor_for_label_handle(role))
+        elif self._selected_label is not None and self._label_frame_rect().contains(scene_pos):
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.viewport().unsetCursor()
+
+    @staticmethod
+    def _cursor_for_label_handle(role: str) -> Qt.CursorShape:
+        if role in {"top_left", "bottom_right"}:
+            return Qt.CursorShape.SizeFDiagCursor
+        if role in {"top_right", "bottom_left"}:
+            return Qt.CursorShape.SizeBDiagCursor
+        if role in {"left", "right"}:
+            return Qt.CursorShape.SizeHorCursor
+        return Qt.CursorShape.SizeVerCursor
+
+    def _label_controls_visible(self) -> bool:
+        if self._selected_label_frame is None:
+            return False
+        return self._selected_label_frame.isVisible()
+
+    def _set_label_controls_visible(self, visible: bool) -> None:
+        if self._selected_label_frame is not None:
+            self._selected_label_frame.setVisible(visible)
+        for handle in self._selected_label_handles:
+            handle.setVisible(visible)
 
     def _show_context_menu(self, global_pos: QPoint) -> None:
         menu = QMenu(self)
