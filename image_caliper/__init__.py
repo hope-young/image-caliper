@@ -1,2 +1,2 @@
 __app_name__ = "ImageCaliper"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
