@@ -40,7 +40,7 @@ python -m image_caliper
 - Linear measurement guides render as double-headed arrows with end caps
 - Optional pixel-value details in measurement text, off by default
 - Curve, arrow, and text annotations
-- Annotation font, color, text size, and line width controls
+- Annotation font, color, label background, text size, and line width controls
 - Browser magnifier dock
 - Measurement results dock
 - Measurement CSV export

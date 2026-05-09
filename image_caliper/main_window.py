@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
         self._annotation_color = QColor(self.legacy_config.annotation_color)
         if not self._annotation_color.isValid():
             self._annotation_color = QColor("#ff3b30")
+        self._label_background_color = self._parse_label_background_color(self.legacy_config.label_background_color)
 
         self._build_actions()
         self._build_menus()
@@ -98,6 +99,7 @@ class MainWindow(QMainWindow):
         self.undo_action = QAction("Undo", self)
         self.font_action = QAction("Font", self)
         self.color_action = QAction("Color", self)
+        self.label_background_color_action = QAction("Label Background", self)
 
         self.mouse_action = QAction("Mouse", self, checkable=True)
         self.calibration_action = QAction("Calibration", self, checkable=True)
@@ -159,6 +161,7 @@ class MainWindow(QMainWindow):
         format_menu = self.menuBar().addMenu("Format")
         format_menu.addAction(self.font_action)
         format_menu.addAction(self.color_action)
+        format_menu.addAction(self.label_background_color_action)
 
     def _build_toolbars(self) -> None:
         tools = QToolBar("Tools", self)
@@ -240,6 +243,16 @@ class MainWindow(QMainWindow):
         self.font_size_spin.setValue(self.legacy_config.annotation_font_size)
         self.font_size_spin.setToolTip("Text size")
 
+        self.label_background_combo = QComboBox(style_panel)
+        self.label_background_combo.addItem("Transparent", "transparent")
+        self.label_background_combo.addItem("White", "#ffffff")
+        self.label_background_combo.addItem("Black", "#000000")
+        self.label_background_combo.addItem("Yellow", "#fff176")
+        self.label_background_combo.addItem("Red", "#ffcccb")
+        self.label_background_combo.addItem("Custom...", "custom")
+        self.label_background_combo.setToolTip("Label background color")
+        self._sync_label_background_combo()
+
         self.line_width_spin = QSpinBox(style_panel)
         self.line_width_spin.setRange(1, 20)
         self.line_width_spin.setValue(self.legacy_config.line_width)
@@ -247,6 +260,7 @@ class MainWindow(QMainWindow):
 
         style_layout.addRow("Color", self.color_button)
         style_layout.addRow("Text size", self.font_size_spin)
+        style_layout.addRow("Label bg", self.label_background_combo)
         style_layout.addRow("Line width", self.line_width_spin)
         style.addWidget(style_panel)
 
@@ -262,6 +276,7 @@ class MainWindow(QMainWindow):
         self.undo_action.triggered.connect(self.canvas.undo_last_operation)
         self.font_action.triggered.connect(self._choose_font)
         self.color_action.triggered.connect(self._choose_color)
+        self.label_background_color_action.triggered.connect(self._choose_label_background_color)
 
         self.mouse_action.triggered.connect(lambda: self.canvas.set_tool("mouse"))
         self.calibration_action.triggered.connect(lambda: self.canvas.set_tool("calibration"))
@@ -281,6 +296,7 @@ class MainWindow(QMainWindow):
         self.measurement_mode_combo.currentIndexChanged.connect(self._set_measurement_interaction_mode)
         self.color_button.clicked.connect(self._choose_color)
         self.font_size_spin.valueChanged.connect(self._set_font_size)
+        self.label_background_combo.currentIndexChanged.connect(self._set_label_background_from_combo)
         self.line_width_spin.valueChanged.connect(self.canvas.set_line_width)
         self.canvas.cursor_position_changed.connect(self._set_cursor_position)
         self.canvas.measurement_changed.connect(self._set_measurement)
@@ -353,6 +369,7 @@ class MainWindow(QMainWindow):
                 measurement_interaction_mode=self.measurement_mode_combo.currentData(),
                 magnifier_zoom=self.magnifier_panel.zoom(),
                 annotation_color=self._annotation_color.name(),
+                label_background_color=self._serialize_label_background_color(self._label_background_color),
                 annotation_font_family=self.canvas.annotation_font.family(),
                 annotation_font_size=self.canvas.annotation_font.pointSize(),
                 line_width=self.canvas.line_width,
@@ -367,6 +384,7 @@ class MainWindow(QMainWindow):
         font.setPointSize(self.legacy_config.annotation_font_size)
         self.canvas.set_annotation_font(font)
         self.canvas.set_annotation_color(self._annotation_color)
+        self.canvas.set_label_background_color(self._label_background_color)
         self.canvas.set_annotation_font_size(self.font_size_spin.value())
         self.canvas.set_line_width(self.line_width_spin.value())
         self.canvas.unit = self.unit_combo.currentText()
@@ -434,6 +452,28 @@ class MainWindow(QMainWindow):
         self.canvas.set_annotation_color(color)
         self._update_color_button()
 
+    def _choose_label_background_color(self) -> None:
+        color = QColorDialog.getColor(
+            self._label_background_color,
+            self,
+            "Label Background",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel,
+        )
+        if not color.isValid():
+            return
+        self._label_background_color = color
+        self.canvas.set_label_background_color(color)
+        self._sync_label_background_combo()
+
+    def _set_label_background_from_combo(self, *_args) -> None:
+        value = self.label_background_combo.currentData()
+        if value == "custom":
+            self._choose_label_background_color()
+            return
+        color = self._parse_label_background_color(str(value))
+        self._label_background_color = color
+        self.canvas.set_label_background_color(color)
+
     def _set_font_size(self, point_size: int) -> None:
         self.canvas.set_annotation_font_size(point_size)
         self._update_status()
@@ -443,6 +483,17 @@ class MainWindow(QMainWindow):
         self.color_button.setStyleSheet(
             f"QPushButton {{ background-color: {color_name}; color: white; border: 1px solid #555; }}"
         )
+
+    def _sync_label_background_combo(self) -> None:
+        serialized = self._serialize_label_background_color(self._label_background_color)
+        index = self.label_background_combo.findData(serialized)
+        if index < 0 and self._label_background_color.alpha() == 255:
+            index = self.label_background_combo.findData(self._label_background_color.name())
+        if index < 0:
+            index = self.label_background_combo.findData("custom")
+        self.label_background_combo.blockSignals(True)
+        self.label_background_combo.setCurrentIndex(max(0, index))
+        self.label_background_combo.blockSignals(False)
 
     def _set_cursor_position(self, x: float, y: float) -> None:
         self._coord_label = f"X = {x:.0f}, Y = {y:.0f}"
@@ -517,6 +568,24 @@ class MainWindow(QMainWindow):
             except ValueError:
                 continue
         return values
+
+    @staticmethod
+    def _parse_label_background_color(raw: str) -> QColor:
+        value = raw.strip()
+        if not value or value.lower() == "transparent":
+            return QColor(Qt.GlobalColor.transparent)
+        color = QColor(value)
+        if color.isValid():
+            return color
+        return QColor(Qt.GlobalColor.transparent)
+
+    @staticmethod
+    def _serialize_label_background_color(color: QColor) -> str:
+        if color.alpha() == 0:
+            return "transparent"
+        if color.alpha() < 255:
+            return color.name(QColor.NameFormat.HexArgb)
+        return color.name()
 
     @staticmethod
     def _encode_qbytearray(data: QByteArray) -> str:

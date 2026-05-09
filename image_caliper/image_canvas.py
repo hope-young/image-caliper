@@ -12,14 +12,15 @@ from PySide6.QtWidgets import QFileDialog, QGraphicsPixmapItem, QGraphicsScene, 
 class EditableLabelItem(QGraphicsTextItem):
     def __init__(self, text: str) -> None:
         super().__init__(text)
-        self.background_color = QColor("#ffffff")
+        self.background_color = QColor(Qt.GlobalColor.transparent)
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
-        painter.save()
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(self.background_color))
-        painter.drawRect(self.boundingRect().adjusted(-2.0, -1.0, 2.0, 1.0))
-        painter.restore()
+        if self.background_color.alpha() > 0:
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(self.background_color))
+            painter.drawRect(self.boundingRect().adjusted(-2.0, -1.0, 2.0, 1.0))
+            painter.restore()
         super().paint(painter, option, widget)
 
 
@@ -75,6 +76,7 @@ class ImageCanvas(QGraphicsView):
         self.show_pixel_values = False
         self.measurement_interaction_mode = "click"
         self.annotation_color = QColor("#ff3b30")
+        self.label_background_color = QColor(Qt.GlobalColor.transparent)
         self.measurement_color = QColor("#ff3b30")
         self.calibration_color = QColor("#34c759")
         self.annotation_font = QFont()
@@ -143,6 +145,13 @@ class ImageCanvas(QGraphicsView):
             self.annotation_color = QColor(color)
             if self._selected_label is not None:
                 self._selected_label.setDefaultTextColor(self.annotation_color)
+
+    def set_label_background_color(self, color: QColor) -> None:
+        if color.isValid():
+            self.label_background_color = QColor(color)
+            if isinstance(self._selected_label, EditableLabelItem):
+                self._selected_label.background_color = QColor(self.label_background_color)
+                self._selected_label.update()
 
     def set_annotation_font(self, font: QFont) -> None:
         self.annotation_font = QFont(font)
@@ -851,6 +860,7 @@ class ImageCanvas(QGraphicsView):
 
     def _add_label(self, text: str, color: QColor | None = None) -> QGraphicsTextItem:
         item = EditableLabelItem(text)
+        item.background_color = QColor(self.label_background_color)
         self.scene().addItem(item)
         self._apply_text_style(item, color or self.annotation_color)
         item.setZValue(10)

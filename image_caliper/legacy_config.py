@@ -15,6 +15,7 @@ class LegacyConfig:
     measurement_interaction_mode: str = "click"
     magnifier_zoom: int = 2
     annotation_color: str = "#ff3b30"
+    label_background_color: str = "transparent"
     annotation_font_family: str = ""
     annotation_font_size: int = 10
     line_width: int = 2
@@ -63,6 +64,13 @@ def load_legacy_config(path: Path) -> LegacyConfig:
         color = parser.get("Annotation", "Color", fallback=config.annotation_color).strip()
         if color:
             config.annotation_color = color
+        label_background_color = parser.get(
+            "Annotation",
+            "LabelBackgroundColor",
+            fallback=config.label_background_color,
+        ).strip()
+        if label_background_color:
+            config.label_background_color = label_background_color
         config.annotation_font_family = parser.get("Annotation", "FontFamily", fallback="").strip()
         config.annotation_font_size = parser.getint("Annotation", "FontSize", fallback=config.annotation_font_size)
         config.annotation_font_size = max(6, min(96, config.annotation_font_size))
@@ -96,6 +104,7 @@ def save_config(path: Path, config: LegacyConfig) -> None:
     }
     parser["Annotation"] = {
         "Color": config.annotation_color,
+        "LabelBackgroundColor": config.label_background_color,
         "FontFamily": config.annotation_font_family,
         "FontSize": str(config.annotation_font_size),
         "LineWidth": str(config.line_width),
