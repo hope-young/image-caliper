@@ -80,8 +80,8 @@ class ImageCanvas(QGraphicsView):
         self.measurement_color = QColor("#ff3b30")
         self.calibration_color = QColor("#34c759")
         self.annotation_font = QFont()
-        self.annotation_font.setPointSize(10)
-        self.line_width = 2
+        self.annotation_font.setPointSize(16)
+        self.line_width = 4
 
     @property
     def image_path(self) -> Path | None:
@@ -381,8 +381,7 @@ class ImageCanvas(QGraphicsView):
         self._pending_items.clear()
 
     def _handle_calibration_click(self, pos: QPointF) -> None:
-        marker = self.scene().addEllipse(pos.x() - 2, pos.y() - 2, 4, 4, self._calibration_pen(), self.calibration_color)
-        self._measure_items.append(marker)
+        marker = self._add_marker(pos, self.calibration_color, self._calibration_pen())
         self._pending_items.append(marker)
 
         if self._measure_start is None:
@@ -774,7 +773,8 @@ class ImageCanvas(QGraphicsView):
         return QPolygonF([QPointF(*tip_array), QPointF(*left), QPointF(*right)])
 
     def _add_marker(self, pos: QPointF, color: QColor, pen: QPen):
-        marker = self.scene().addEllipse(pos.x() - 2, pos.y() - 2, 4, 4, pen, color)
+        radius = max(4.0, self.line_width * 2.5)
+        marker = self.scene().addEllipse(pos.x() - radius, pos.y() - radius, radius * 2, radius * 2, pen, color)
         self._measure_items.append(marker)
         return marker
 

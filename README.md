@@ -1,6 +1,6 @@
 # ImageCaliper
 
-Version: 1.0.2
+Version: 1.0.3
 
 ImageCaliper is a modern cross-platform image measurement and annotation tool, rewritten from the legacy `Image Processing English V1.0` workflow.
 

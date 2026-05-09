@@ -17,8 +17,8 @@ class LegacyConfig:
     annotation_color: str = "#ff3b30"
     label_background_color: str = "transparent"
     annotation_font_family: str = ""
-    annotation_font_size: int = 10
-    line_width: int = 2
+    annotation_font_size: int = 16
+    line_width: int = 4
     window_geometry: str = ""
     window_state: str = ""
     magnifier_splitter_sizes: str = ""
@@ -75,7 +75,7 @@ def load_legacy_config(path: Path) -> LegacyConfig:
         config.annotation_font_size = parser.getint("Annotation", "FontSize", fallback=config.annotation_font_size)
         config.annotation_font_size = max(6, min(96, config.annotation_font_size))
         config.line_width = parser.getint("Annotation", "LineWidth", fallback=config.line_width)
-        config.line_width = max(1, min(20, config.line_width))
+        config.line_width = max(1, min(80, config.line_width))
 
     if parser.has_section("Window"):
         config.window_geometry = parser.get("Window", "Geometry", fallback="").strip()

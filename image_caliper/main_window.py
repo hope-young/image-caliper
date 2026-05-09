@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
         self._sync_label_background_combo()
 
         self.line_width_spin = QSpinBox(style_panel)
-        self.line_width_spin.setRange(1, 20)
+        self.line_width_spin.setRange(1, 80)
         self.line_width_spin.setValue(self.legacy_config.line_width)
         self.line_width_spin.setToolTip("Line width")
 
