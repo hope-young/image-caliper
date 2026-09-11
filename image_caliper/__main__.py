@@ -21,6 +21,10 @@ class DragDropMainWindow(MainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
+        # QGraphicsView uses an internal viewport. Keep drag/drop handling at the
+        # top-level window so Finder/Explorer drops work consistently over the canvas.
+        self.canvas.setAcceptDrops(False)
+        self.canvas.viewport().setAcceptDrops(False)
 
     @classmethod
     def _first_supported_image(cls, event: QDragEnterEvent | QDropEvent) -> Path | None:
