@@ -19,12 +19,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cat > release-notes.md <<'EOF'
+          ## What's Changed
+
+          - Added drag-and-drop image opening from Finder/File Explorer.
+          - Improved macOS Finder drag-and-drop event handling.
+          - Supports JPG, JPEG, PNG, BMP, TIF, TIFF, and PCX files.
+          - Added macOS drag-and-drop CI coverage.
+          - Synced the internal application version to 1.0.4.
+          EOF
           gh release view v1.0.4 --repo "${{ github.repository }}" >/dev/null 2>&1 || \
           gh release create v1.0.4 \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "ImageCaliper 1.0.4" \
-            --notes $'## What's Changed\n\n- Added drag-and-drop image opening from Finder/File Explorer.\n- Improved macOS Finder drag-and-drop event handling.\n- Supports JPG, JPEG, PNG, BMP, TIF, TIFF, and PCX files.\n- Added macOS drag-and-drop CI coverage.\n- Synced the internal application version to 1.0.4.\n\nCloses #1.'
+            --notes-file release-notes.md
 
   build:
     name: Build ${{ matrix.platform.name }}
