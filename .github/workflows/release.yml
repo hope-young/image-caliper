@@ -19,6 +19,9 @@ jobs:
     name: Ensure GitHub Release exists
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Resolve release tag
         id: version
         shell: bash
