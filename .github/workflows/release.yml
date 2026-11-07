@@ -15,8 +15,33 @@ permissions:
   contents: write
 
 jobs:
+  ensure-release:
+    name: Ensure GitHub Release exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            gh release create "${{ steps.version.outputs.tag }}" \
+              --title "ImageCaliper ${{ steps.version.outputs.tag }}" \
+              --generate-notes \
+              --verify-tag
+          fi
+
   build:
     name: Build ${{ matrix.platform.name }}
+    needs: ensure-release
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false

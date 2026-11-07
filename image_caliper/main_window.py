@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QToolBar,
+    QTabWidget,
     QWidget,
 )
 
@@ -33,9 +34,14 @@ from .resources import asset_path
 
 
 class MainWindow(QMainWindow):
+    DEFAULT_WINDOW_SIZE = (1280, 800)
+    MINIMUM_WINDOW_SIZE = (960, 640)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ImageCaliper")
+        self.resize(*self.DEFAULT_WINDOW_SIZE)
+        self.setMinimumSize(*self.MINIMUM_WINDOW_SIZE)
 
         self.workspace_root = Path(__file__).resolve().parents[1]
         self.settings_path = self.workspace_root / "settings.ini"
@@ -44,9 +50,13 @@ class MainWindow(QMainWindow):
         if self.icon_path.exists():
             self.setWindowIcon(QIcon(str(self.icon_path)))
 
-        self.canvas = ImageCanvas()
-        self.canvas.calibration_value = self.legacy_config.calibrate_value
-        self.setCentralWidget(self.canvas)
+        self.image_tabs = QTabWidget(self)
+        self.image_tabs.setTabsClosable(True)
+        self.image_tabs.setMovable(True)
+        self.image_tabs.tabBar().setExpanding(False)
+        self.image_tabs.setStyleSheet("QTabWidget::tab-bar { alignment: left; }")
+        self.setCentralWidget(self.image_tabs)
+        self._add_image_tab()
 
         self.magnifier_panel = MagnifierPanel()
         self.magnifier_dock = QDockWidget("Browser Mag", self)
@@ -271,9 +281,9 @@ class MainWindow(QMainWindow):
         self.export_measurements_action.triggered.connect(self._export_measurements_csv)
         self.save_settings_action.triggered.connect(self._save_settings)
         self.exit_action.triggered.connect(self.close)
-        self.fit_action.triggered.connect(self.canvas.reset_view)
-        self.clear_measure_action.triggered.connect(self.canvas.clear_measurements)
-        self.undo_action.triggered.connect(self.canvas.undo_last_operation)
+        self.fit_action.triggered.connect(lambda: self.canvas.reset_view())
+        self.clear_measure_action.triggered.connect(lambda: self.canvas.clear_measurements())
+        self.undo_action.triggered.connect(lambda: self.canvas.undo_last_operation())
         self.font_action.triggered.connect(self._choose_font)
         self.color_action.triggered.connect(self._choose_color)
         self.label_background_color_action.triggered.connect(self._choose_label_background_color)
@@ -297,22 +307,129 @@ class MainWindow(QMainWindow):
         self.color_button.clicked.connect(self._choose_color)
         self.font_size_spin.valueChanged.connect(self._set_font_size)
         self.label_background_combo.currentIndexChanged.connect(self._set_label_background_from_combo)
-        self.line_width_spin.valueChanged.connect(self.canvas.set_line_width)
-        self.canvas.cursor_position_changed.connect(self._set_cursor_position)
-        self.canvas.measurement_changed.connect(self._set_measurement)
-        self.canvas.image_loaded.connect(self._on_image_loaded)
-        self.canvas.image_loaded.connect(lambda _path: self.magnifier_panel.set_image(self.canvas.image_bgr))
-        self.canvas.cursor_image_position_changed.connect(self.magnifier_panel.update_position)
-        self.canvas.calibration_changed.connect(self._on_canvas_calibration_changed)
-        self.canvas.operation_recorded.connect(self._append_measurement_result)
-        self.canvas.operation_removed.connect(self._remove_measurement_result)
-        self.canvas.operations_cleared.connect(self._clear_measurement_results)
+        self.line_width_spin.valueChanged.connect(lambda value: self.canvas.set_line_width(value))
+        self.image_tabs.currentChanged.connect(self._on_image_tab_changed)
+        self.image_tabs.tabCloseRequested.connect(self._close_image_tab)
+
+    @property
+    def canvas(self) -> ImageCanvas:
+        canvas = self.image_tabs.currentWidget()
+        if isinstance(canvas, ImageCanvas):
+            return canvas
+        raise RuntimeError("No image canvas is available.")
+
+    def _add_image_tab(self, path: Path | None = None) -> ImageCanvas:
+        if path is not None and self.image_tabs.count() == 1:
+            existing_canvas = self.canvas_for_tab(0)
+            if existing_canvas.image_path is None:
+                self.image_tabs.setTabText(0, path.name)
+                existing_canvas.load_image(path)
+                return existing_canvas
+        canvas = ImageCanvas()
+        canvas.calibration_value = self.calibration_spin.value() if hasattr(self, "calibration_spin") else self.legacy_config.calibrate_value
+        if hasattr(self, "unit_combo"):
+            canvas.unit = self.unit_combo.currentText() or "nm"
+            canvas.set_decimal_places(self.decimal_places_spin.value())
+            canvas.show_pixel_values = self.show_pixel_values_check.isChecked()
+            canvas.set_measurement_interaction_mode(self.measurement_mode_combo.currentData())
+            canvas.set_annotation_font(self.canvas.annotation_font if self.image_tabs.count() else canvas.annotation_font)
+            canvas.set_annotation_color(self._annotation_color)
+            canvas.set_label_background_color(self._label_background_color)
+            canvas.set_line_width(self.line_width_spin.value())
+            canvas.set_annotation_font_size(self.font_size_spin.value())
+        title = path.name if path else "Untitled"
+        index = self.image_tabs.addTab(canvas, title)
+        self.image_tabs.setCurrentIndex(index)
+        self._connect_canvas(canvas)
+        if path is not None:
+            canvas.load_image(path)
+        return canvas
+
+    def _connect_canvas(self, canvas: ImageCanvas) -> None:
+        canvas.cursor_position_changed.connect(self._set_cursor_position)
+        canvas.measurement_changed.connect(self._set_measurement)
+        canvas.image_loaded.connect(lambda path, item=canvas: self._on_canvas_image_loaded(item, path))
+        canvas.cursor_image_position_changed.connect(
+            lambda x, y, item=canvas: self.magnifier_panel.update_position(x, y) if item is self.canvas else None
+        )
+        canvas.calibration_changed.connect(self._on_canvas_calibration_changed)
+        canvas.operation_recorded.connect(lambda text, item=canvas: self._append_measurement_result(text) if item is self.canvas else None)
+        canvas.operation_removed.connect(lambda text, item=canvas: self._remove_measurement_result(text) if item is self.canvas else None)
+        canvas.operations_cleared.connect(lambda item=canvas: self._clear_measurement_results() if item is self.canvas else None)
+
+    def _on_canvas_image_loaded(self, canvas: ImageCanvas, path: str) -> None:
+        index = self.image_tabs.indexOf(canvas)
+        if index >= 0:
+            self.image_tabs.setTabText(index, Path(path).name)
+        if canvas is self.canvas:
+            self.magnifier_panel.set_image(canvas.image_bgr)
+            self._status.showMessage(f"Loaded: {path}", 3000)
+
+    def _on_image_tab_changed(self, _index: int) -> None:
+        canvas = self.canvas
+        self.magnifier_panel.set_image(canvas.image_bgr)
+        self._restore_canvas_settings(canvas)
+        self.measurement_table.setRowCount(0)
+        for _, text in canvas._operations:
+            self._append_measurement_result(text)
+        self._coord_label = "X = 0, Y = 0"
+        self._measurement_label = ""
+        self._update_status()
+
+    def _restore_canvas_settings(self, canvas: ImageCanvas) -> None:
+        for widget, value in (
+            (self.calibration_spin, canvas.calibration_value),
+            (self.unit_combo, canvas.unit),
+            (self.decimal_places_spin, canvas.decimal_places),
+            (self.show_pixel_values_check, canvas.show_pixel_values),
+        ):
+            blocked = widget.blockSignals(True)
+            if isinstance(widget, QComboBox):
+                widget.setCurrentText(value)
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(value)
+            else:
+                widget.setValue(value)
+            widget.blockSignals(blocked)
 
     def _open_image(self) -> None:
-        try:
-            self.canvas.open_image_dialog(self.legacy_config.last_directory)
-        except Exception as exc:
-            QMessageBox.critical(self, "Error Loading Image", str(exc))
+        directory = self.legacy_config.last_directory
+        start_dir = str(directory) if directory and directory.exists() else ""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Open Images", start_dir,
+            "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.pcx);;All Files (*.*)",
+        )
+        self.open_image_paths([Path(path) for path in paths])
+
+    def open_image_paths(self, paths: list[Path]) -> None:
+        for path in paths:
+            existing = next(
+                (i for i in range(self.image_tabs.count())
+                 if self.canvas_for_tab(i).image_path is not None
+                 and self.canvas_for_tab(i).image_path.resolve() == path.resolve()),
+                None,
+            )
+            if existing is not None:
+                self.image_tabs.setCurrentIndex(existing)
+                continue
+            try:
+                self._add_image_tab(path)
+            except Exception as exc:
+                QMessageBox.critical(self, "Error Loading Image", str(exc))
+
+    def canvas_for_tab(self, index: int) -> ImageCanvas:
+        canvas = self.image_tabs.widget(index)
+        if not isinstance(canvas, ImageCanvas):
+            raise RuntimeError("Invalid image tab.")
+        return canvas
+
+    def _close_image_tab(self, index: int) -> None:
+        if self.image_tabs.count() == 1:
+            return
+        widget = self.image_tabs.widget(index)
+        self.image_tabs.removeTab(index)
+        if widget is not None:
+            widget.deleteLater()
 
     def _save_as_image(self) -> None:
         try:
@@ -397,6 +514,10 @@ class MainWindow(QMainWindow):
         geometry = self._decode_qbytearray(self.legacy_config.window_geometry)
         if geometry:
             self.restoreGeometry(geometry)
+            expanded_states = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+            if self.windowState() & expanded_states:
+                self.setWindowState(self.windowState() & ~expanded_states)
+                self.resize(*self.DEFAULT_WINDOW_SIZE)
         state = self._decode_qbytearray(self.legacy_config.window_state)
         if state:
             self.restoreState(state)

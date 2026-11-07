@@ -1,6 +1,6 @@
 # ImageCaliper
 
-Version: 1.0.3
+Version: 1.0.5 (in development)
 
 ImageCaliper is a modern cross-platform image measurement and annotation tool, rewritten from the legacy `Image Processing English V1.0` workflow.
 
@@ -30,6 +30,8 @@ python -m image_caliper
 
 - Load legacy `Processing.ini`
 - Open image files
+- Open multiple images in tabs, switch between them, and close individual tabs
+- Open multiple image files at once or drag multiple files into the window
 - Pan and zoom image canvas
 - Show cursor coordinates
 - Interactive calibration
