@@ -190,6 +190,8 @@ class MainWindow(QMainWindow):
         tools.addAction(self.measure_distance_action)
         tools.addAction(self.measure_angle_action)
         tools.addAction(self.measure_area_action)
+        tools.addSeparator()
+        tools.addAction(self.clear_measure_action)
 
         settings = QToolBar("Calibration", self)
         settings.setObjectName("calibrationToolbar")
